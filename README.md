@@ -24,11 +24,8 @@ python portscan.py --host <HOST_OR_CIDR> --ports <PORT_RANGE>
   python portscan.py --host <HOST_OR_CIDR> --dns
 
 ## Examples
-Port Scanning
+### Port Scanning
 python portscan.py --host 192.168.1.1 --ports 80-100
-
-ICMP Ping
+### Host Scanning
 python portscan.py --host 192.168.1.10/24 --ping
-
-DNS Resolution
 python portscan.py --host 192.168.1.0/16 --dns
