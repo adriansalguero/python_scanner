@@ -1,4 +1,4 @@
-### Simple Port Scanner
+# Simple Port Scanner
 
 A simple Python script for scanning open ports on a host or within a network using ICMP ping, DNS resolution, or traditional port scanning.
 
@@ -17,14 +17,13 @@ pip install -r requirements.txt
 By default, the script creates a tcp packet to probe ports but you can also use it to check name resolution or ICMP packets
 
 python portscan.py --host <HOST_OR_CIDR> --ports <PORT_RANGE>
-    Replace <HOST_OR_CIDR> with the target host or CIDR range.
-    Replace <PORT_RANGE> with the desired port range (default is 1-65535).
+
   # ICMP Ping
   python portscan.py --host <HOST_OR_CIDR> --ping
   # DNS Resolution
   python portscan.py --host <HOST_OR_CIDR> --dns
 
-# Examples
+## Examples
 Port Scanning
 python portscan.py --host 192.168.1.1 --ports 80-100
 
