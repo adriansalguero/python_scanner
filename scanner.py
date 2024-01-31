@@ -1,8 +1,8 @@
 import argparse
 import ipaddress
 import socket
-import subprocess
-import signal
+import struct
+import time
 from concurrent.futures import ThreadPoolExecutor
 from colorama import init, Fore
 
@@ -12,14 +12,28 @@ RED = Fore.RED
 RESET = Fore.RESET
 GRAY = Fore.LIGHTBLACK_EX
 
-# Global variable to track whether the user pressed Ctrl-C
-interrupted = False
+def calculate_checksum(message):
+    # Function to calculate ICMP checksum
+    checksum = 0
+    count_to = (len(message) // 2) * 2
+    count = 0
 
-def handle_ctrl_c(signum, frame):
-    global interrupted
-    interrupted = True
-    print("\nScan interrupted by user.")
-    exit(0)
+    while count < count_to:
+        this_val = message[count + 1] * 256 + message[count]
+        checksum += this_val
+        checksum &= 0xffffffff
+        count += 2
+
+    if count_to < len(message):
+        checksum += message[len(message) - 1]
+        checksum &= 0xffffffff
+
+    checksum = (checksum >> 16) + (checksum & 0xffff)
+    checksum += (checksum >> 16)
+    checksum = ~checksum
+    checksum &= 0xffff
+
+    return checksum
 
 def dns_resolve(ip):
     try:
@@ -37,9 +51,40 @@ def port_scan(ip, port):
 
 def icmp_ping(ip):
     try:
-        subprocess.check_output(['ping', '-c', '1', ip], stderr=subprocess.STDOUT, text=True)
-        print(f"{GREEN}[+] {ip} is reachable (ICMP ping)    {RESET}")
-    except subprocess.CalledProcessError:
+        icmp_socket = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_ICMP)
+        icmp_socket.settimeout(1)
+        icmp_id = 12345
+        sequence = 1
+        payload = b'PingTestPayload'
+
+        # ICMP Header
+        icmp_type = 8  # ICMP Echo Request
+        code = 0
+        checksum = 0
+        header = struct.pack('!BBHHH', icmp_type, code, checksum, icmp_id, sequence)
+        payload_checksum = calculate_checksum(header + payload)
+
+        # ICMP Packet
+        icmp_packet = struct.pack('!BBHHH', icmp_type, code, socket.htons(payload_checksum), icmp_id, sequence) + payload
+
+        # Send ICMP packet
+        icmp_socket.sendto(icmp_packet, (ip, 0))
+
+        # Receive ICMP response
+        start_time = time.time()
+        response, _ = icmp_socket.recvfrom(1024)
+        end_time = time.time()
+
+        # Check if the received packet is an ICMP Echo Reply
+        response_type = struct.unpack('!B', response[20:21])[0]
+        if response_type == 0:  # ICMP Echo Reply
+            print(f"{GREEN}[+] {ip} is reachable (ICMP ping)    {RESET}")
+        else:
+            print(f"{RED}[-] {ip} is not reachable (ICMP ping)  {RESET}")
+
+        icmp_socket.close()
+
+    except socket.error:
         print(f"{RED}[-] {ip} is not reachable (ICMP ping)  {RESET}")
 
 def scan_ports_threaded(ip, ports):
@@ -47,23 +92,19 @@ def scan_ports_threaded(ip, ports):
         executor.map(lambda port: port_scan(ip, port), ports)
 
 def main(host, ping, dns, port_range, num_threads):
-    signal.signal(signal.SIGINT, handle_ctrl_c)
-
-    if not host:
-        print("Please provide a host or CIDR range using --host option.")
-        return
-
-    if ping and dns:
-        print("Please choose either --ping or --dns, not both.")
-        return
-
     try:
         network = ipaddress.ip_network(host, strict=False)
         ip_list = [str(ip) for ip in network.hosts()]
     except ValueError:
         ip_list = [host]
 
-    if not ping and not dns:
+    if dns:
+        for ip in ip_list:
+            dns_resolve(ip)
+    elif ping:
+        for ip in ip_list:
+            icmp_ping(ip)
+    else:
         try:
             start_port, end_port = map(int, port_range.split('-'))
             ports = range(start_port, end_port + 1)
@@ -71,20 +112,16 @@ def main(host, ping, dns, port_range, num_threads):
             print("Invalid port range format. Please provide a valid range (e.g., 1-100).")
             return
 
-    for ip in ip_list:
-        if interrupted:
-            break
+        for ip in ip_list:
+            try:
+                ip_obj = ipaddress.ip_address(ip)
+            except ValueError:
+                print(f"Invalid IP address: {ip}")
+                continue
 
-        print(f"Scanning ports for {ip}:")
-
-        if dns:
-            dns_resolve(ip)
-        elif ping:
-            icmp_ping(ip)
-        else:
             scan_ports_threaded(ip, ports)
 
-    print("\nScan completed.")
+        print("\nScan completed.")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Simple port scanner")
@@ -96,7 +133,12 @@ if __name__ == "__main__":
     args = parser.parse_args()
     host, ping, dns, port_range, num_threads = args.host, args.ping, args.dns, args.port_range, args.num_threads
 
-    if ping and dns:
+    if not host:
+        print("Please provide a host or CIDR range using --host option.")
+    elif ping and dns:
         print("Please choose either --ping or --dns, not both.")
     else:
-        main(host, ping, dns, port_range, num_threads)
+        try:
+            main(host, ping, dns, port_range, num_threads)
+        except KeyboardInterrupt:
+            print("\nScan interrupted by user.")
